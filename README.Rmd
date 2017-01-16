@@ -166,4 +166,4 @@ Partial Dependence Plot for the random forest model shows the same information a
 * It was seen that the conversion dropped for the users above 30 years. We should try to understand why the website is performing badly for people older than 30 years.
 * As the website is driving conversions for young people, the marketing team should reach out to more younger customers through different channels.
 * Existing users i.e. old customers are likely to buy more. So, a targeted mail campaign can be started to bring back older customers. They might be offered discounts.
-* There are some users who have spent a lot of time on the site but have not bought anything yet. They can be the easiest customers to convert by providing them some offer.
+* There are some users who have spent a lot of time on the site but have not bought anything yet. They can be the easiest customers to convert by providing them some offer as they have a high purchase intent.
