@@ -1,0 +1,169 @@
+---
+output: 
+  html_document:
+    fig_caption: yes
+    keep_md: yes
+---
+
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(fig.width = 12, 
+                      fig.height = 8, 
+                      fig.path = 'Figs/',
+                      echo = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE)
+```
+
+```{r}
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(rpart)
+library(randomForest)
+```
+
+# Conversion Rate Optimization
+
+In this project, we try to predict the conversion rate for customers visiting a particular site. Along with prediction, we give some recommendations to the marketing team to improve conversion going forward based on our analysis. The data contains information about one user session in each row. Each row contains the information about the customer being converted or not and other user attributes. Below are the attributes about each customer in a session:
+
+* country - Country of the user.
+* age - Age of the user.
+* new_user - An indicator variable to denote if the user is an existing customer or a new one.
+* source - marketing channel (Direct, Ads, SEO)
+* total_pages_visited - number of pages visited during this session (using it as a proxy for user engagement with the site)
+
+Two hypotheses immediately spring out:
+
+* The more engaged a user is the more he likely it is that he will buy i.e. high numbers of total_pages_visited will lead to conversion.
+* An existing user will be more likely to buy i.e. new_user = 0 would likey have higher conversion rate than new_user = 1.
+
+## Insights from Data Exploration 
+
+```{r}
+conversion_data <- read.csv("data/conversion_data.csv", 
+                            stringsAsFactors = FALSE)
+conversion_data <- conversion_data %>%
+                     mutate(country = factor(ifelse(country == "Germany", 
+                                             'DE', country)),
+                            new_user = factor(new_user),
+                            source = factor(source))
+summary(conversion_data)
+```
+Maximum age is 123! This is highly unlikely. Check for all records greater where age is greater than 80.
+
+### Data Cleanup
+```{r}
+filter(conversion_data, age > 80)
+```
+There are two records with unusually high value for age. Will remove from further analysis.
+
+```{r}
+conversion_data <- filter(conversion_data, age <= 80) 
+page_view_conversion <- conversion_data %>% 
+                          group_by(total_pages_visited) %>%
+                          summarise(conversion_rate =  mean(converted))
+ggplot(data = page_view_conversion, aes(x = total_pages_visited, y = conversion_rate)) +
+  geom_line() + ggtitle("Conversion Rate by Page View")
+```
+Our hypothesis turns out to be correct. More pages a customer visits, more likely he is to buy.
+
+```{r}
+country_conversion <- conversion_data %>%
+                        group_by(country) %>%
+                        summarise(conversion_rate = mean(converted))
+ggplot(data  =country_conversion, aes(x = country, y = conversion_rate)) +
+  geom_bar(stat = "identity", fill = "steelblue", colour = "black") +
+  ggtitle("Conversion Rate by Country")
+```
+Germany has the highest conversion rate among the countries. China has the lowest.
+
+```{r}
+channel_conversion <- conversion_data %>%
+                        group_by(source) %>%
+                        summarise(conversion_rate = mean(converted))
+ggplot(data = channel_conversion, aes(x = source, y = conversion_rate)) +
+  geom_bar(stat = "identity", fill = "steelblue", colour = "black") +
+  ggtitle("Conversion Rate by Marketing Channel")
+```
+Ads and SEO have a slightly higher conversion rate although these might not be statistically significant.
+
+```{r}
+new_user_conversion <- conversion_data %>%
+                         group_by(new_user) %>%
+                         summarise(conversion_rate = mean(converted))
+ggplot(data = new_user_conversion, aes(x = new_user, y = conversion_rate)) +
+  geom_bar(stat = "identity", fill = "steelblue", colour = "black") +
+  ggtitle("Conversion Rate by User Type (Existing / New)")
+```
+Our hypothesis about existing users buying more is confirmed here.
+
+```{r}
+age_conversion <- conversion_data %>%
+                    group_by(age) %>%
+                    summarise(conversion_rate = mean(converted, na.rm = TRUE))
+ggplot(age_conversion, aes(x = age, y = conversion_rate)) + geom_line() +
+  ggtitle("Conversion Rate by Age")
+```
+The conversion rate keeps dexreasing as the age increases. However, around 30 years of age, it starts rapid decrease and there seems to be a different behavior after 55 years of age with unusual spikes in conversion.
+
+## Model
+
+I am choosing tree based models for this data because we need to provide good prediction as well as some insights for providing recommendation to the marketing teams. Tree based models are interpretable and highly accurate.
+
+```{r}
+set.seed(42)
+trainIDX <- createDataPartition(conversion_data$converted, 
+                                p = 0.75,
+                                list = FALSE)
+conversion_data$converted <- as.factor(ifelse(conversion_data$converted == 1, "Yes", "No"))
+trainX <- conversion_data[trainIDX, -length(conversion_data)]
+trainY <- conversion_data$converted[trainIDX]
+testX <- conversion_data[-trainIDX, -length(conversion_data)]
+testY <- conversion_data$converted[-trainIDX]
+```
+
+```{r}
+tree <- rpart(trainY ~ ., 
+               data = cbind(trainX, trainY),
+               control = rpart.control(maxdepth = 5))
+tree_var_imp <- as.data.frame(varImp(tree)) %>% tibble::rownames_to_column()
+ggplot(data = tree_var_imp, aes(x = rowname, y = Overall)) + 
+  geom_bar(stat = "identity", fill = "steelblue", colour = "black") +
+  ggtitle("Variable Importance for Simple CART")
+prediction_tree <- predict(tree, testX, type = "class")
+confusionMatrix(prediction_tree, reference = testY, positive = 'Yes')
+```
+```{r}
+rf <- randomForest(x = trainX,
+                   y = trainY,
+                   xtest = testX,
+                   ytest  =testY,
+                   ntree = 100,
+                   keep.forest = TRUE)
+rf_prediction = predict(rf, testX, type = "class")
+confusionMatrix(rf_prediction,
+                reference = testY,
+                positive = "Yes")
+rf_var_imp = as.data.frame(varImp(rf)) %>% tibble::rownames_to_column()
+ggplot(data = rf_var_imp, aes(x = rowname, y = Overall)) + 
+  geom_bar(stat = "identity", fill = "steelblue", colour = "black") +
+  ggtitle("Variable Importance for Random Forest")
+```
+`total_pages_visited`, `new_user`, and `country` are the top three variables for predicting conversion.
+```{r}
+par(mfrow = c(2, 2))
+partialPlot(rf, trainX, new_user, "Yes")
+partialPlot(rf, trainX, age, "Yes")
+partialPlot(rf, trainX, country, "Yes")
+partialPlot(rf, trainX, source, "Yes")
+```
+Partial Dependence Plot for the random forest model shows the same information as variable importance plot.
+
+## Recommendations
+
+* Germany has the highest conversion rate but not many german customers are visiting the site. The marketing team should target german customers and bring them to the site.
+* The website is not working well for Chinese customers although there is large traffic from China. There might be some problem with the chinese website. The marketing team along with the technology team should further look into why is this happening and fix this as China has a large userbase which can drive conversions.
+* It was seen that the conversion dropped for the users above 30 years. We should try to understand why the website is performing badly for people older than 30 years.
+* As the website is driving conversions for young people, the marketing team should reach out to more younger customers through different channels.
+* Existing users i.e. old customers are likely to buy more. So, a targeted mail campaign can be started to bring back older customers. They might be offered discounts.
+* There are some users who have spent a lot of time on the site but have not bought anything yet. They can be the easiest customers to convert by providing them some offer.
